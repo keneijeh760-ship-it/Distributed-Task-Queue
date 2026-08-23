@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 )
 
 func main() {
@@ -18,5 +19,9 @@ func main() {
 	fmt.Println(task, err)
 	task, err = q.DequeueTask()
 	fmt.Println(task, err)
+	conn, err := connectDB()
+	if err != nil {
+		log.Fatal(err, conn)
+	}
 
 }
