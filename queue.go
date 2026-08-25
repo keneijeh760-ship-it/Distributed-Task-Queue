@@ -2,7 +2,10 @@ package main
 
 import (
 	"errors"
-	"sync"
+
+	"context"
+
+	"github.com/jackc/pgx/v5"
 )
 
 type TaskStatus string
@@ -20,56 +23,67 @@ type Task struct {
 }
 
 type Queue struct {
-	mu    sync.Mutex
-	tasks map[string]*Task
-	order []string
+	conn *pgx.Conn
 }
 
-func newQueue() *Queue {
+func NewQueue(conn *pgx.Conn) *Queue {
 	return &Queue{
-		tasks: make(map[string]*Task),
-		order: []string{},
+		conn: conn,
 	}
 }
 
-func (q *Queue) AddTask(id, payload string) error {
-	q.mu.Lock()
-	defer q.mu.Unlock()
+func (q *Queue) DequeueTask() (*Task, error) {
+	ctx := context.Background()
 
-	if _, exists := q.tasks[id]; exists {
-		return errors.New("task already exists")
+	tx, err := q.conn.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	var id, payload string
+	err = tx.QueryRow(ctx,
+		"SELECT id, payload FROM tasks WHERE status = $1 ORDER BY created_at ASC LIMIT 1 FOR UPDATE SKIP LOCKED",
+		StatusPending,
+	).Scan(&id, &payload)
+
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, errors.New("queue is empty")
+		}
+		return nil, err
 	}
 
-	task := &Task{
+	_, err = tx.Exec(ctx,
+		"UPDATE tasks SET status = $1 WHERE id = $2",
+		StatusInProgress, id,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+
+	return &Task{
 		ID:      id,
 		Payload: payload,
-		Status:  StatusPending,
-	}
-	q.tasks[id] = task
-	q.order = append(q.order, id)
-	return nil
+		Status:  StatusInProgress,
+	}, nil
 }
 
 func (q *Queue) DequeueTask() (*Task, error) {
 
-	q.mu.Lock()
-	defer q.mu.Unlock()
+	ctx := context.Background()
 
-	if len(q.order) == 0 {
-		return nil, errors.New("queue is empty")
+	tx, err := q.conn.Begin(ctx)
+	if err != nil {
+		return nil, err
 	}
+	defer tx.Rollback(ctx)
 
-	id := q.order[0]
-
-	q.order = q.order[1:]
-	task, exists := q.tasks[id]
-
-	if !exists {
-		return nil, errors.New("task not found")
-	}
-
-	task.Status = StatusInProgress
-	return task, nil
+	var id, payload string
 
 }
 

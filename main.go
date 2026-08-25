@@ -6,7 +6,7 @@ import (
 )
 
 func main() {
-	q := newQueue()
+	q := NewQueue()
 	q.AddTask("1", "Task 1 payload")
 	q.AddTask("2", "Task 2 payload")
 
