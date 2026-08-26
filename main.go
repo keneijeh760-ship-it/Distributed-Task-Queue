@@ -3,10 +3,15 @@ package main
 import (
 	"fmt"
 	"log"
+
+	"github.com/jackc/pgx/v5"
 )
 
+var test *pgx.Conn
+
 func main() {
-	q := NewQueue()
+
+	q := NewQueue(test)
 	q.AddTask("1", "Task 1 payload")
 	q.AddTask("2", "Task 2 payload")
 
