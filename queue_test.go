@@ -67,6 +67,36 @@ func TestAcknowledge_Success(t *testing.T) {
 	}
 }
 
+func TestAcknowledge_DoubleAcknowledge(t *testing.T) {
+	q := setupTestQueue(t)
+
+	q.AddTask("1", "Task 1 payload")
+	task, err := q.DequeueTask()
+	if err != nil {
+		t.Fatalf("failed to dequeue task: %v", err)
+	}
+
+	err = q.Acknowledge(task.ID)
+	if err != nil {
+		t.Fatalf("failed to acknowledge task: %v", err)
+	}
+
+	err = q.Acknowledge(task.ID)
+	if err == nil {
+		t.Fatal("expected error for double acknowledge, got nil")
+	}
+
+	err = q.Acknowledge(task.ID)
+	if err != nil {
+		t.Fatalf("failed to acknowledge task: %v", err)
+	}
+
+	err = q.Acknowledge(task.ID)
+	if err == nil {
+		t.Fatal("expected error for double acknowledge, got nil")
+	}
+}
+
 func setupTestQueue(t *testing.T) *Queue {
 	conn, err := connectDB()
 	if err != nil {
