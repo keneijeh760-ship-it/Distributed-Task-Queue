@@ -4,10 +4,8 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/jackc/pgx/v5"
+	"context"
 )
-
-var test *pgx.Conn
 
 func main() {
 
@@ -15,6 +13,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	defer conn.Close(context.Background())
 
 	q := NewQueue(conn)
 
