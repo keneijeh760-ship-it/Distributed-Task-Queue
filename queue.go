@@ -32,6 +32,16 @@ func NewQueue(conn *pgx.Conn) *Queue {
 	}
 }
 
+func (q *Queue) AddTask(id, payload string) error {
+
+	_, err := q.conn.Exec(context.Background(), "INSERT INTO tasks (id, payload, status) VALUES ($1, $2, $3)", id, payload, StatusPending)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func (q *Queue) DequeueTask() (*Task, error) {
 	ctx := context.Background()
 
@@ -73,34 +83,19 @@ func (q *Queue) DequeueTask() (*Task, error) {
 	}, nil
 }
 
-func (q *Queue) DequeueTask() (*Task, error) {
-
-	ctx := context.Background()
-
-	tx, err := q.conn.Begin(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback(ctx)
-
-	var id, payload string
-
-}
-
 func (q *Queue) Acknowledge(id string) error {
-	q.mu.Lock()
-	defer q.mu.Unlock()
+	tag, err := q.conn.Exec(context.Background(),
+		"UPDATE tasks SET status = $1 WHERE id = $2 AND status = $3",
+		StatusCompleted, id, StatusInProgress,
+	)
 
-	task, exists := q.tasks[id]
-
-	if !exists {
-		return errors.New("task not found")
+	if err != nil {
+		return err
 	}
 
-	if task.Status != StatusInProgress {
-		return errors.New("you shouldn't be able to acknowledge a task that was never leased.")
+	if tag.RowsAffected() == 0 {
+		return errors.New("task not found or not in progress")
 	}
 
-	task.Status = StatusCompleted
 	return nil
 }
