@@ -11,7 +11,13 @@ var test *pgx.Conn
 
 func main() {
 
-	q := NewQueue(test)
+	conn, err := connectDB()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	q := NewQueue(conn)
+
 	q.AddTask("1", "Task 1 payload")
 	q.AddTask("2", "Task 2 payload")
 
@@ -24,9 +30,4 @@ func main() {
 	fmt.Println(task, err)
 	task, err = q.DequeueTask()
 	fmt.Println(task, err)
-	conn, err := connectDB()
-	if err != nil {
-		log.Fatal(err, conn)
-	}
-
 }
