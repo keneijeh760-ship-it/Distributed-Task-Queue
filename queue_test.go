@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -59,8 +60,16 @@ func TestDequeueTask_LeaseExpiration(t *testing.T) {
 		"UPDATE tasks SET lease_expires_at = $1 WHERE id = $2",
 		time.Now().Add(-1*time.Minute), task.ID,
 	)
+	fmt.Println(time.Now())
 	if err != nil {
 		t.Fatalf("failed to force lease expiry: %v", err)
+	}
+	rows, _ := q.conn.Query(context.Background(), "SELECT id, status, lease_expires_at FROM tasks")
+	for rows.Next() {
+		var id, status string
+		var lease time.Time
+		rows.Scan(&id, &status, &lease)
+		fmt.Println("DEBUG:", id, status, lease)
 	}
 	task2, err := q.DequeueTask()
 	if err != nil {
@@ -69,9 +78,11 @@ func TestDequeueTask_LeaseExpiration(t *testing.T) {
 	if task2.ID != task.ID {
 		t.Fatal("expected the same task to be reclaimed")
 	}
+
 	if task2.Status != StatusInProgress {
 		t.Fatal("expected reclaimed task status to be in_progress")
 	}
+
 }
 
 func TestDequeueTask_EmptyQueue(t *testing.T) {
