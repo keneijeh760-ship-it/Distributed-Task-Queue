@@ -55,10 +55,11 @@ func (q *Queue) DequeueTask() (*Task, error) {
 	defer tx.Rollback(ctx)
 
 	var id, payload string
+	var leaseExpiresAt time.Time
 	err = tx.QueryRow(ctx,
-		"SELECT id, payload FROM tasks WHERE status = $1 OR (status = $2 AND lease_expires_at < NOW()) ORDER BY created_at ASC LIMIT 1 FOR UPDATE SKIP LOCKED",
-		StatusPending,
-	).Scan(&id, &payload)
+		"SELECT id, payload, lease_expires_at FROM tasks WHERE status = $1 OR (status = $2 AND lease_expires_at < NOW()) ORDER BY created_at ASC LIMIT 1 FOR UPDATE SKIP LOCKED",
+		StatusPending, StatusInProgress,
+	).Scan(&id, &payload, &leaseExpiresAt)
 
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -68,7 +69,7 @@ func (q *Queue) DequeueTask() (*Task, error) {
 	}
 
 	_, err = tx.Exec(ctx,
-		"UPDATE tasks SET status = $1 WHERE id = $2",
+		"UPDATE tasks SET status = $1, lease_expires_at = NOW() + INTERVAL '30 seconds' WHERE id = $2",
 		StatusInProgress, id,
 	)
 	if err != nil {
@@ -80,9 +81,10 @@ func (q *Queue) DequeueTask() (*Task, error) {
 	}
 
 	return &Task{
-		ID:      id,
-		Payload: payload,
-		Status:  StatusInProgress,
+		ID:             id,
+		Payload:        payload,
+		Status:         StatusInProgress,
+		LeaseExpiresAt: leaseExpiresAt,
 	}, nil
 }
 
