@@ -9,7 +9,7 @@ func worker(id int, q *Queue) {
 	for {
 		task, err := q.DequeueTask()
 		if err != nil {
-			time.Sleep()
+			time.Sleep(500 * time.Millisecond)
 			continue
 		}
 		fmt.Printf("worker %d processing task %s\n", id, task.ID)
