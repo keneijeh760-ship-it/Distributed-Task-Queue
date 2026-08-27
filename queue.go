@@ -5,6 +5,8 @@ import (
 
 	"context"
 
+	"time"
+
 	"github.com/jackc/pgx/v5"
 )
 
@@ -17,9 +19,10 @@ const (
 )
 
 type Task struct {
-	ID      string
-	Payload string
-	Status  TaskStatus
+	ID             string
+	Payload        string
+	Status         TaskStatus
+	LeaseExpiresAt time.Time
 }
 
 type Queue struct {
@@ -53,7 +56,7 @@ func (q *Queue) DequeueTask() (*Task, error) {
 
 	var id, payload string
 	err = tx.QueryRow(ctx,
-		"SELECT id, payload FROM tasks WHERE status = $1 ORDER BY created_at ASC LIMIT 1 FOR UPDATE SKIP LOCKED",
+		"SELECT id, payload FROM tasks WHERE status = $1 OR (status = $2 AND lease_expires_at < NOW()) ORDER BY created_at ASC LIMIT 1 FOR UPDATE SKIP LOCKED",
 		StatusPending,
 	).Scan(&id, &payload)
 

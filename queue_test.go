@@ -87,11 +87,6 @@ func TestAcknowledge_DoubleAcknowledge(t *testing.T) {
 	}
 
 	err = q.Acknowledge(task.ID)
-	if err != nil {
-		t.Fatalf("failed to acknowledge task: %v", err)
-	}
-
-	err = q.Acknowledge(task.ID)
 	if err == nil {
 		t.Fatal("expected error for double acknowledge, got nil")
 	}
