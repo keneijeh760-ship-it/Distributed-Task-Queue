@@ -22,7 +22,7 @@ type Task struct {
 	ID             string
 	Payload        string
 	Status         TaskStatus
-	LeaseExpiresAt time.Time
+	LeaseExpiresAt *time.Time
 }
 
 type Queue struct {
@@ -55,7 +55,7 @@ func (q *Queue) DequeueTask() (*Task, error) {
 	defer tx.Rollback(ctx)
 
 	var id, payload string
-	var leaseExpiresAt time.Time
+	var leaseExpiresAt *time.Time
 	err = tx.QueryRow(ctx,
 		"SELECT id, payload, lease_expires_at FROM tasks WHERE status = $1 OR (status = $2 AND lease_expires_at < NOW()) ORDER BY created_at ASC LIMIT 1 FOR UPDATE SKIP LOCKED",
 		StatusPending, StatusInProgress,
@@ -68,9 +68,12 @@ func (q *Queue) DequeueTask() (*Task, error) {
 		return nil, err
 	}
 
+	newLease := time.Now().Add(30 * time.Second)
+	leaseExpiresAt = &newLease
+
 	_, err = tx.Exec(ctx,
-		"UPDATE tasks SET status = $1, lease_expires_at = NOW() + INTERVAL '30 seconds' WHERE id = $2",
-		StatusInProgress, id,
+		"UPDATE tasks SET status = $1, lease_expires_at = $3 WHERE id = $2",
+		StatusInProgress, id, leaseExpiresAt,
 	)
 	if err != nil {
 		return nil, err
