@@ -3,8 +3,6 @@ package main
 import (
 	"fmt"
 	"log"
-
-	"context"
 )
 
 func main() {
@@ -13,7 +11,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer conn.Close(context.Background())
+	defer conn.Close()
 
 	q := NewQueue(conn)
 

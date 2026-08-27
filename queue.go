@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type TaskStatus string
@@ -26,10 +27,10 @@ type Task struct {
 }
 
 type Queue struct {
-	conn *pgx.Conn
+	conn *pgxpool.Pool
 }
 
-func NewQueue(conn *pgx.Conn) *Queue {
+func NewQueue(conn *pgxpool.Pool) *Queue {
 	return &Queue{
 		conn: conn,
 	}
