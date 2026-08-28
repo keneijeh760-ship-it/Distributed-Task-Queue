@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"time"
 )
 
 func main() {
@@ -19,4 +20,5 @@ func main() {
 
 	go worker(1, q)
 	go worker(2, q)
+	time.Sleep(10 * time.Second)
 }
