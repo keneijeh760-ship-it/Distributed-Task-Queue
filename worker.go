@@ -14,7 +14,10 @@ func worker(id int, q *Queue) {
 		}
 		fmt.Printf("worker %d processing task %s\n", id, task.ID)
 		time.Sleep(1 * time.Second) // simulate doing work
-		q.Acknowledge(task.ID)
+		if err := q.Acknowledge(task.ID); err != nil {
+			fmt.Printf("worker %d acknowledge error for task %s: %v\n", id, task.ID, err)
+			continue
+		}
 		fmt.Printf("worker %d finished task %s\n", id, task.ID)
 	}
 }
