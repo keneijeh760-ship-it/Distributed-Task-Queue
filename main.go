@@ -18,11 +18,10 @@ func main() {
 	}
 
 	q := NewQueue(conn)
-	if err := q.AddTask("1", "Task 1 payload"); err != nil {
-		log.Fatal(err)
-	}
-	if err := q.AddTask("2", "Task 2 payload"); err != nil {
-		log.Fatal(err)
+	for _, id := range []string{"1", "2", "3", "4"} {
+		if err := q.AddTask(id, "Task "+id+" payload"); err != nil {
+			log.Fatal(err)
+		}
 	}
 
 	go worker(1, q)
