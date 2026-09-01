@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"time"
 )
@@ -13,7 +14,8 @@ func main() {
 	}
 	defer conn.Close()
 
-	if _, err := conn.Exec(context.Background(), "DELETE FROM tasks"); err != nil {
+	ctx := context.Background()
+	if _, err := conn.Exec(ctx, "DELETE FROM tasks"); err != nil {
 		log.Fatal(err)
 	}
 
@@ -26,5 +28,24 @@ func main() {
 
 	go worker(1, q)
 	go worker(2, q)
-	time.Sleep(10 * time.Second)
+
+	deadline := time.After(15 * time.Second)
+	tick := time.NewTicker(200 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		select {
+		case <-deadline:
+			log.Fatal("timed out waiting for tasks to complete")
+		case <-tick.C:
+			var n int
+			err := conn.QueryRow(ctx, "SELECT COUNT(*) FROM tasks WHERE status = $1", StatusCompleted).Scan(&n)
+			if err != nil {
+				log.Fatal(err)
+			}
+			if n == 4 {
+				fmt.Println("all tasks completed")
+				return
+			}
+		}
+	}
 }
