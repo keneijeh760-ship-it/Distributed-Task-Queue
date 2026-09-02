@@ -26,8 +26,8 @@ func main() {
 		}
 	}
 
-	go worker(1, q)
-	go worker(2, q)
+	go worker(1, q, nil)
+	go worker(2, q, nil)
 
 	deadline := time.After(15 * time.Second)
 	tick := time.NewTicker(200 * time.Millisecond)
