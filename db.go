@@ -35,6 +35,7 @@ func ensureSchema(ctx context.Context, pool *pgxpool.Pool) error {
 			last_error TEXT,
 			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		)`,
+		`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS idempotency_key TEXT`,
 	}
 	for _, stmt := range statements {
 		if _, err := pool.Exec(ctx, stmt); err != nil {
