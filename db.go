@@ -42,6 +42,7 @@ func ensureSchema(ctx context.Context, pool *pgxpool.Pool) error {
 		`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS lease_expires_at TIMESTAMPTZ`,
 		`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS last_error TEXT`,
 		`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS tasks_idempotency_key_idx ON tasks (idempotency_key)`,
 	}
 	for _, stmt := range statements {
 		if _, err := pool.Exec(ctx, stmt); err != nil {
