@@ -1,10 +1,8 @@
 package main
 
 import (
-	"errors"
-
 	"context"
-
+	"errors"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -46,14 +44,65 @@ func NewQueue(conn *pgxpool.Pool) *Queue {
 	}
 }
 
-func (q *Queue) AddTask(id, payload string) error {
+type rowScanner interface {
+	Scan(dest ...any) error
+}
 
-	_, err := q.conn.Exec(context.Background(), "INSERT INTO tasks (id, payload, status) VALUES ($1, $2, $3)", id, payload, StatusPending)
+const taskSelectColumns = `id, idempotency_key, payload, status, attempts, max_attempts, visible_at, lease_expires_at, last_error`
+
+func scanTask(row rowScanner) (*Task, error) {
+	var task Task
+	var status string
+	var key *string
+	var lastError *string
+	err := row.Scan(
+		&task.ID,
+		&key,
+		&task.Payload,
+		&status,
+		&task.Attempts,
+		&task.MaxAttempts,
+		&task.VisibleAt,
+		&task.LeaseExpiresAt,
+		&lastError,
+	)
 	if err != nil {
-		return err
+		return nil, err
+	}
+	task.Status = TaskStatus(status)
+	if key != nil {
+		task.IdempotencyKey = *key
+	}
+	if lastError != nil {
+		task.LastError = *lastError
+	}
+	return &task, nil
+}
+
+func (q *Queue) AddTask(idempotencyKey, payload string) (*Task, error) {
+	ctx := context.Background()
+	task, err := scanTask(q.conn.QueryRow(ctx, `
+		INSERT INTO tasks (id, idempotency_key, payload, status, max_attempts)
+		VALUES ($1, $1, $2, $3, $4)
+		ON CONFLICT (id) DO NOTHING
+		RETURNING `+taskSelectColumns,
+		idempotencyKey, payload, StatusPending, q.maxAttempts,
+	))
+	if err == nil {
+		return task, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return nil, err
 	}
 
-	return nil
+	existing, err := scanTask(q.conn.QueryRow(ctx, `
+		SELECT `+taskSelectColumns+` FROM tasks WHERE id = $1 OR idempotency_key = $1`,
+		idempotencyKey,
+	))
+	if err != nil {
+		return nil, err
+	}
+	return existing, nil
 }
 
 func (q *Queue) DequeueTask() (*Task, error) {

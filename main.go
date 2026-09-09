@@ -21,7 +21,7 @@ func main() {
 
 	q := NewQueue(conn)
 	for _, id := range []string{"1", "2", "3", "4"} {
-		if err := q.AddTask(id, "Task "+id+" payload"); err != nil {
+		if _, err := q.AddTask(id, "Task "+id+" payload"); err != nil {
 			log.Fatal(err)
 		}
 	}
