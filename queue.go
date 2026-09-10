@@ -107,62 +107,79 @@ func (q *Queue) AddTask(idempotencyKey, payload string) (*Task, error) {
 
 func (q *Queue) DequeueTask() (*Task, error) {
 	ctx := context.Background()
-
-	tx, err := q.conn.Begin(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback(ctx)
-
-	var id, payload string
-	var leaseExpiresAt *time.Time
-	err = tx.QueryRow(ctx,
-		"SELECT id, payload, lease_expires_at FROM tasks WHERE status = $1 OR (status = $2 AND lease_expires_at < NOW()) ORDER BY created_at ASC LIMIT 1 FOR UPDATE SKIP LOCKED",
-		StatusPending, StatusInProgress,
-	).Scan(&id, &payload, &leaseExpiresAt)
-
-	if err != nil {
-		if err == pgx.ErrNoRows {
-			return nil, errors.New("queue is empty")
+	for {
+		tx, err := q.conn.Begin(ctx)
+		if err != nil {
+			return nil, err
 		}
-		return nil, err
-	}
 
-	seconds := q.lease.Seconds()
-	_, err = tx.Exec(ctx,
-		"UPDATE tasks SET status = $1, lease_expires_at = NOW() + ($3 * INTERVAL '1 second') WHERE id = $2",
-		StatusInProgress, id, seconds,
-	)
-	if err != nil {
-		return nil, err
-	}
+		task, err := scanTask(tx.QueryRow(ctx, `
+			SELECT `+taskSelectColumns+`
+			FROM tasks
+			WHERE (status = $1 AND visible_at <= NOW())
+			   OR (status = $2 AND lease_expires_at < NOW())
+			ORDER BY created_at ASC
+			LIMIT 1
+			FOR UPDATE SKIP LOCKED`,
+			StatusPending, StatusInProgress,
+		))
+		if err != nil {
+			_ = tx.Rollback(ctx)
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil, errors.New("queue is empty")
+			}
+			return nil, err
+		}
 
-	if err := tx.Commit(ctx); err != nil {
-		return nil, err
-	}
 
-	leaseExpiresAt = nil
-	return &Task{
-		ID:             id,
-		Payload:        payload,
-		Status:         StatusInProgress,
-		LeaseExpiresAt: leaseExpiresAt,
-	}, nil
+		claimed, err := scanTask(tx.QueryRow(ctx, `
+			UPDATE tasks
+			SET status = $1,
+			    lease_expires_at = NOW() + ($2 * INTERVAL '1 second'),
+			    attempts = attempts + 1
+			WHERE id = $3
+			RETURNING `+taskSelectColumns,
+			StatusInProgress, q.lease.Seconds(), task.ID,
+		))
+		if err != nil {
+			_ = tx.Rollback(ctx)
+			return nil, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return nil, err
+		}
+		return claimed, nil
+	}
 }
 
-func (q *Queue) Acknowledge(id string) error {
-	tag, err := q.conn.Exec(context.Background(),
-		"UPDATE tasks SET status = $1 WHERE id = $2 AND status = $3",
-		StatusCompleted, id, StatusInProgress,
+func (q *Queue) RenewLease(id string) error {
+	tag, err := q.conn.Exec(context.Background(), `
+		UPDATE tasks
+		SET lease_expires_at = NOW() + ($2 * INTERVAL '1 second')
+		WHERE id = $1 AND status = $3`,
+		id, q.lease.Seconds(), StatusInProgress,
 	)
-
 	if err != nil {
 		return err
 	}
-
 	if tag.RowsAffected() == 0 {
 		return errors.New("task not found or not in progress")
 	}
+	return nil
+}
 
+func (q *Queue) Acknowledge(id string) error {
+	tag, err := q.conn.Exec(context.Background(), `
+		UPDATE tasks
+		SET status = $1, lease_expires_at = NULL
+		WHERE id = $2 AND status = $3`,
+		StatusCompleted, id, StatusInProgress,
+	)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return errors.New("task not found or not in progress")
+	}
 	return nil
 }
