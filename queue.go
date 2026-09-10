@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -131,6 +132,20 @@ func (q *Queue) DequeueTask() (*Task, error) {
 			return nil, err
 		}
 
+		if task.Status == StatusInProgress && task.Attempts >= task.MaxAttempts {
+			reason := task.LastError
+			if reason == "" {
+				reason = "lease expired after max attempts"
+			}
+			if err := deadLetter(ctx, tx, task, reason); err != nil {
+				_ = tx.Rollback(ctx)
+				return nil, err
+			}
+			if err := tx.Commit(ctx); err != nil {
+				return nil, err
+			}
+			continue
+		}
 
 		claimed, err := scanTask(tx.QueryRow(ctx, `
 			UPDATE tasks
@@ -182,4 +197,70 @@ func (q *Queue) Acknowledge(id string) error {
 		return errors.New("task not found or not in progress")
 	}
 	return nil
+}
+
+func (q *Queue) Fail(id, reason string) error {
+	ctx := context.Background()
+	tx, err := q.conn.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	task, err := scanTask(tx.QueryRow(ctx, `
+		SELECT `+taskSelectColumns+` FROM tasks WHERE id = $1 FOR UPDATE`,
+		id,
+	))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return errors.New("task not found or not in progress")
+		}
+		return err
+	}
+	if task.Status != StatusInProgress {
+		return errors.New("task not found or not in progress")
+	}
+
+	if task.Attempts >= task.MaxAttempts {
+		if err := deadLetter(ctx, tx, task, reason); err != nil {
+			return err
+		}
+		return tx.Commit(ctx)
+	}
+
+	tag, err := tx.Exec(ctx, `
+		UPDATE tasks
+		SET status = $1,
+		    last_error = $2,
+		    lease_expires_at = NULL,
+		    visible_at = NOW() + (LEAST(30, POWER(2, attempts - 1)) * INTERVAL '1 second')
+		WHERE id = $3 AND status = $4`,
+		StatusPending, reason, id, StatusInProgress,
+	)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return errors.New("task not found or not in progress")
+	}
+	return tx.Commit(ctx)
+}
+
+func deadLetter(ctx context.Context, tx pgx.Tx, task *Task, reason string) error {
+	_, err := tx.Exec(ctx, `
+		INSERT INTO dead_letters (id, task_id, payload, attempts, last_error)
+		VALUES ($1, $1, $2, $3, $4)`,
+		task.ID, task.Payload, task.Attempts, reason,
+	)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if !errors.As(err, &pgErr) || pgErr.Code != "23505" {
+			return err
+		}
+	}
+	_, err = tx.Exec(ctx, `
+		UPDATE tasks SET status = $1, last_error = $2, lease_expires_at = NULL WHERE id = $3`,
+		StatusDead, reason, task.ID,
+	)
+	return err
 }
