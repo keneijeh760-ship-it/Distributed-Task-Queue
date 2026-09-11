@@ -23,6 +23,23 @@ func TestAddTask_Success(t *testing.T) {
 	}
 }
 
+func TestAddTask_DuplicateID(t *testing.T) {
+	q := setupTestQueue(t)
+
+	first, err := q.AddTask("1", "original payload")
+	if err != nil {
+		t.Fatalf("failed to add task: %v", err)
+	}
+
+	second, err := q.AddTask("1", "changed payload")
+	if err != nil {
+		t.Fatalf("duplicate add should return the original task: %v", err)
+	}
+	if second.ID != first.ID || second.Payload != "original payload" {
+		t.Fatalf("duplicate overwrote the task: %+v", second)
+	}
+}
+
 func setupTestQueue(t *testing.T) *Queue {
 	t.Helper()
 	conn, err := connectDB()
