@@ -70,6 +70,15 @@ func TestDequeueTask_FIFO(t *testing.T) {
 	}
 }
 
+func TestDequeueTask_EmptyQueue(t *testing.T) {
+	q := setupTestQueue(t)
+
+	_, err := q.DequeueTask()
+	if err == nil {
+		t.Fatal("expected error for empty queue, got nil")
+	}
+}
+
 func setupTestQueue(t *testing.T) *Queue {
 	t.Helper()
 	conn, err := connectDB()
