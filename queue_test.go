@@ -40,6 +40,36 @@ func TestAddTask_DuplicateID(t *testing.T) {
 	}
 }
 
+func TestDequeueTask_FIFO(t *testing.T) {
+	q := setupTestQueue(t)
+
+	if _, err := q.AddTask("1", "Task 1 payload"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := q.AddTask("2", "Task 2 payload"); err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := q.DequeueTask()
+	if err != nil {
+		t.Fatalf("failed to dequeue task: %v", err)
+	}
+	if first.ID != "1" || first.Payload != "Task 1 payload" || first.Status != StatusInProgress {
+		t.Fatalf("unexpected task: %+v", first)
+	}
+	if first.Attempts != 1 {
+		t.Fatalf("expected attempts 1, got %d", first.Attempts)
+	}
+
+	second, err := q.DequeueTask()
+	if err != nil {
+		t.Fatalf("failed to dequeue second task: %v", err)
+	}
+	if second.ID != "2" {
+		t.Fatalf("expected task 2 next, got %s", second.ID)
+	}
+}
+
 func setupTestQueue(t *testing.T) *Queue {
 	t.Helper()
 	conn, err := connectDB()
