@@ -79,6 +79,23 @@ func TestDequeueTask_EmptyQueue(t *testing.T) {
 	}
 }
 
+func TestAcknowledge_Success(t *testing.T) {
+	q := setupTestQueue(t)
+
+	if _, err := q.AddTask("1", "Task 1 payload"); err != nil {
+		t.Fatal(err)
+	}
+	task, err := q.DequeueTask()
+	if err != nil {
+		t.Fatalf("failed to dequeue task: %v", err)
+	}
+
+	err = q.Acknowledge(task.ID)
+	if err != nil {
+		t.Fatalf("failed to acknowledge task: %v", err)
+	}
+}
+
 func setupTestQueue(t *testing.T) *Queue {
 	t.Helper()
 	conn, err := connectDB()
