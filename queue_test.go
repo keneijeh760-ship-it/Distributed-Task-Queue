@@ -118,6 +118,31 @@ func TestAcknowledge_DoubleAcknowledge(t *testing.T) {
 	}
 }
 
+func TestDequeueTask_UnexpiredLeaseNotStolen(t *testing.T) {
+	q := setupTestQueue(t)
+	if _, err := q.AddTask("1", "Task 1 payload"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := q.AddTask("2", "Task 2 payload"); err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := q.DequeueTask()
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := q.DequeueTask()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.ID == first.ID {
+		t.Fatal("unexpired lease was stolen")
+	}
+	if second.ID != "2" {
+		t.Fatalf("expected task 2, got %s", second.ID)
+	}
+}
+
 func setupTestQueue(t *testing.T) *Queue {
 	t.Helper()
 	conn, err := connectDB()
