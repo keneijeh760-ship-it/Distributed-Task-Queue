@@ -178,6 +178,39 @@ func TestDequeueTask_LeaseExpiration(t *testing.T) {
 	}
 }
 
+func TestRenewLease_HoldsTaskPastOriginalDeadline(t *testing.T) {
+	q := setupTestQueue(t)
+	if _, err := q.AddTask("1", "Task 1 payload"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := q.AddTask("2", "Task 2 payload"); err != nil {
+		t.Fatal(err)
+	}
+
+	held, err := q.DequeueTask()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = q.conn.Exec(context.Background(),
+		"UPDATE tasks SET lease_expires_at = NOW() - INTERVAL '1 minute' WHERE id = $1",
+		held.ID,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := q.RenewLease(held.ID); err != nil {
+		t.Fatalf("renew lease: %v", err)
+	}
+
+	next, err := q.DequeueTask()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.ID != "2" {
+		t.Fatalf("renewed task was reclaimed, got %s", next.ID)
+	}
+}
+
 func setupTestQueue(t *testing.T) *Queue {
 	t.Helper()
 	conn, err := connectDB()
