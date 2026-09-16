@@ -211,6 +211,70 @@ func TestRenewLease_HoldsTaskPastOriginalDeadline(t *testing.T) {
 	}
 }
 
+func TestFail_BackoffSkipsUntilVisible(t *testing.T) {
+	q := setupTestQueue(t)
+	if _, err := q.AddTask("1", "retry me"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := q.AddTask("2", "other"); err != nil {
+		t.Fatal(err)
+	}
+
+	failed, err := q.DequeueTask()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := q.Fail(failed.ID, "handler exploded"); err != nil {
+		t.Fatalf("fail: %v", err)
+	}
+
+	var visibleAt time.Time
+	var lastError string
+	var status string
+	err = q.conn.QueryRow(context.Background(),
+		"SELECT status, visible_at, last_error FROM tasks WHERE id = $1", failed.ID,
+	).Scan(&status, &visibleAt, &lastError)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status != string(StatusPending) {
+		t.Fatalf("expected pending after fail, got %s", status)
+	}
+	if lastError != "handler exploded" {
+		t.Fatalf("unexpected last error %q", lastError)
+	}
+	if !visibleAt.After(time.Now()) {
+		t.Fatal("expected visible_at in the future")
+	}
+
+	next, err := q.DequeueTask()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.ID == failed.ID {
+		t.Fatal("dequeued a task that is still backing off")
+	}
+
+	_, err = q.conn.Exec(context.Background(),
+		"UPDATE tasks SET visible_at = NOW() - INTERVAL '1 second' WHERE id = $1",
+		failed.ID,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := q.Acknowledge(next.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	retried, err := q.DequeueTask()
+	if err != nil {
+		t.Fatalf("expected task after backoff: %v", err)
+	}
+	if retried.ID != failed.ID {
+		t.Fatalf("expected %s after backoff, got %s", failed.ID, retried.ID)
+	}
+}
+
 func setupTestQueue(t *testing.T) *Queue {
 	t.Helper()
 	conn, err := connectDB()
