@@ -322,6 +322,91 @@ func TestFail_DeadLetterAtMaxAttempts(t *testing.T) {
 	}
 }
 
+func TestChaos_CrashRedelivery(t *testing.T) {
+	q := setupTestQueue(t)
+	if _, err := q.AddTask("1", "one"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := q.AddTask("2", "two"); err != nil {
+		t.Fatal(err)
+	}
+
+	var mu sync.Mutex
+	handled := map[string]int{}
+	record := func(id string) {
+		mu.Lock()
+		handled[id]++
+		mu.Unlock()
+	}
+
+	abandoned, err := q.DequeueTask()
+	if err != nil {
+		t.Fatal(err)
+	}
+	record(abandoned.ID)
+
+	_, err = q.conn.Exec(context.Background(),
+		"UPDATE tasks SET lease_expires_at = NOW() - INTERVAL '1 minute' WHERE id = $1",
+		abandoned.ID,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var done atomic.Bool
+	var wg sync.WaitGroup
+	for i := 0; i < 3; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for !done.Load() {
+				task, err := q.DequeueTask()
+				if err != nil {
+					time.Sleep(20 * time.Millisecond)
+					continue
+				}
+				record(task.ID)
+				if err := q.Acknowledge(task.ID); err != nil {
+					t.Errorf("ack %s: %v", task.ID, err)
+				}
+			}
+		}()
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		var n int
+		err := q.conn.QueryRow(context.Background(),
+			"SELECT COUNT(*) FROM tasks WHERE status = $1", StatusCompleted,
+		).Scan(&n)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n == 2 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	done.Store(true)
+	wg.Wait()
+
+	var completed int
+	if err := q.conn.QueryRow(context.Background(),
+		"SELECT COUNT(*) FROM tasks WHERE status = $1", StatusCompleted,
+	).Scan(&completed); err != nil {
+		t.Fatal(err)
+	}
+	if completed != 2 {
+		t.Fatalf("expected both tasks completed, got %d", completed)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if handled[abandoned.ID] < 2 {
+		t.Fatalf("expected abandoned task %s to run at least twice, got %d", abandoned.ID, handled[abandoned.ID])
+	}
+}
+
 func setupTestQueue(t *testing.T) *Queue {
 	t.Helper()
 	conn, err := connectDB()
