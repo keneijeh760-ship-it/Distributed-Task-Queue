@@ -275,6 +275,53 @@ func TestFail_BackoffSkipsUntilVisible(t *testing.T) {
 	}
 }
 
+func TestFail_DeadLetterAtMaxAttempts(t *testing.T) {
+	q := setupTestQueue(t)
+	q.maxAttempts = 2
+	if _, err := q.AddTask("poison", "nope"); err != nil {
+		t.Fatal(err)
+	}
+
+	for attempt := 1; attempt <= 2; attempt++ {
+		task, err := q.DequeueTask()
+		if err != nil {
+			t.Fatalf("dequeue attempt %d: %v", attempt, err)
+		}
+		if err := q.Fail(task.ID, "still broken"); err != nil {
+			t.Fatalf("fail attempt %d: %v", attempt, err)
+		}
+		if attempt < 2 {
+			_, err = q.conn.Exec(context.Background(),
+				"UPDATE tasks SET visible_at = NOW() - INTERVAL '1 second' WHERE id = $1",
+				task.ID,
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	var status string
+	if err := q.conn.QueryRow(context.Background(), "SELECT status FROM tasks WHERE id = $1", "poison").Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != string(StatusDead) {
+		t.Fatalf("expected dead, got %s", status)
+	}
+
+	var letters int
+	if err := q.conn.QueryRow(context.Background(), "SELECT COUNT(*) FROM dead_letters WHERE task_id = $1", "poison").Scan(&letters); err != nil {
+		t.Fatal(err)
+	}
+	if letters != 1 {
+		t.Fatalf("expected 1 dead letter, got %d", letters)
+	}
+
+	if _, err := q.DequeueTask(); err == nil {
+		t.Fatal("dead task was claimed again")
+	}
+}
+
 func setupTestQueue(t *testing.T) *Queue {
 	t.Helper()
 	conn, err := connectDB()
