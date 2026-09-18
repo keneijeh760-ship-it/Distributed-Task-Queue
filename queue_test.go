@@ -70,54 +70,6 @@ func TestDequeueTask_FIFO(t *testing.T) {
 	}
 }
 
-func TestDequeueTask_EmptyQueue(t *testing.T) {
-	q := setupTestQueue(t)
-
-	_, err := q.DequeueTask()
-	if err == nil {
-		t.Fatal("expected error for empty queue, got nil")
-	}
-}
-
-func TestAcknowledge_Success(t *testing.T) {
-	q := setupTestQueue(t)
-
-	if _, err := q.AddTask("1", "Task 1 payload"); err != nil {
-		t.Fatal(err)
-	}
-	task, err := q.DequeueTask()
-	if err != nil {
-		t.Fatalf("failed to dequeue task: %v", err)
-	}
-
-	err = q.Acknowledge(task.ID)
-	if err != nil {
-		t.Fatalf("failed to acknowledge task: %v", err)
-	}
-}
-
-func TestAcknowledge_DoubleAcknowledge(t *testing.T) {
-	q := setupTestQueue(t)
-
-	if _, err := q.AddTask("1", "Task 1 payload"); err != nil {
-		t.Fatal(err)
-	}
-	task, err := q.DequeueTask()
-	if err != nil {
-		t.Fatalf("failed to dequeue task: %v", err)
-	}
-
-	err = q.Acknowledge(task.ID)
-	if err != nil {
-		t.Fatalf("failed to acknowledge task: %v", err)
-	}
-
-	err = q.Acknowledge(task.ID)
-	if err == nil {
-		t.Fatal("expected error for double acknowledge, got nil")
-	}
-}
-
 func TestDequeueTask_UnexpiredLeaseNotStolen(t *testing.T) {
 	q := setupTestQueue(t)
 	if _, err := q.AddTask("1", "Task 1 payload"); err != nil {
@@ -208,6 +160,54 @@ func TestRenewLease_HoldsTaskPastOriginalDeadline(t *testing.T) {
 	}
 	if next.ID != "2" {
 		t.Fatalf("renewed task was reclaimed, got %s", next.ID)
+	}
+}
+
+func TestDequeueTask_EmptyQueue(t *testing.T) {
+	q := setupTestQueue(t)
+
+	_, err := q.DequeueTask()
+	if err == nil {
+		t.Fatal("expected error for empty queue, got nil")
+	}
+}
+
+func TestAcknowledge_Success(t *testing.T) {
+	q := setupTestQueue(t)
+
+	if _, err := q.AddTask("1", "Task 1 payload"); err != nil {
+		t.Fatal(err)
+	}
+	task, err := q.DequeueTask()
+	if err != nil {
+		t.Fatalf("failed to dequeue task: %v", err)
+	}
+
+	err = q.Acknowledge(task.ID)
+	if err != nil {
+		t.Fatalf("failed to acknowledge task: %v", err)
+	}
+}
+
+func TestAcknowledge_DoubleAcknowledge(t *testing.T) {
+	q := setupTestQueue(t)
+
+	if _, err := q.AddTask("1", "Task 1 payload"); err != nil {
+		t.Fatal(err)
+	}
+	task, err := q.DequeueTask()
+	if err != nil {
+		t.Fatalf("failed to dequeue task: %v", err)
+	}
+
+	err = q.Acknowledge(task.ID)
+	if err != nil {
+		t.Fatalf("failed to acknowledge task: %v", err)
+	}
+
+	err = q.Acknowledge(task.ID)
+	if err == nil {
+		t.Fatal("expected error for double acknowledge, got nil")
 	}
 }
 
@@ -404,6 +404,86 @@ func TestChaos_CrashRedelivery(t *testing.T) {
 	defer mu.Unlock()
 	if handled[abandoned.ID] < 2 {
 		t.Fatalf("expected abandoned task %s to run at least twice, got %d", abandoned.ID, handled[abandoned.ID])
+	}
+}
+
+func TestChaos_PoisonWhileOthersComplete(t *testing.T) {
+	q := setupTestQueue(t)
+	q.maxAttempts = 2
+	if _, err := q.AddTask("poison", "poison"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := q.AddTask("good-1", "ok"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := q.AddTask("good-2", "ok"); err != nil {
+		t.Fatal(err)
+	}
+
+	var done atomic.Bool
+	var wg sync.WaitGroup
+	for i := 0; i < 3; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for !done.Load() {
+				task, err := q.DequeueTask()
+				if err != nil {
+					time.Sleep(20 * time.Millisecond)
+					continue
+				}
+				if task.Payload == "poison" {
+					if err := q.Fail(task.ID, "poison"); err != nil {
+						t.Errorf("fail poison: %v", err)
+					}
+					continue
+				}
+				if err := q.Acknowledge(task.ID); err != nil {
+					t.Errorf("ack %s: %v", task.ID, err)
+				}
+			}
+		}()
+	}
+
+	deadline := time.Now().Add(8 * time.Second)
+	for time.Now().Before(deadline) {
+		var good int
+		var letters int
+		err := q.conn.QueryRow(context.Background(), `
+			SELECT
+				(SELECT COUNT(*) FROM tasks WHERE id IN ('good-1', 'good-2') AND status = $1),
+				(SELECT COUNT(*) FROM dead_letters WHERE task_id = 'poison')`,
+			StatusCompleted,
+		).Scan(&good, &letters)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if good == 2 && letters == 1 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	done.Store(true)
+	wg.Wait()
+
+	var good int
+	var letters int
+	var poisonStatus string
+	err := q.conn.QueryRow(context.Background(), `
+		SELECT
+			(SELECT COUNT(*) FROM tasks WHERE id IN ('good-1', 'good-2') AND status = $1),
+			(SELECT COUNT(*) FROM dead_letters WHERE task_id = 'poison'),
+			(SELECT status FROM tasks WHERE id = 'poison')`,
+		StatusCompleted,
+	).Scan(&good, &letters, &poisonStatus)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if good != 2 {
+		t.Fatalf("expected 2 good tasks completed, got %d", good)
+	}
+	if letters != 1 || poisonStatus != string(StatusDead) {
+		t.Fatalf("expected poison dead-lettered, status=%s letters=%d", poisonStatus, letters)
 	}
 }
 
