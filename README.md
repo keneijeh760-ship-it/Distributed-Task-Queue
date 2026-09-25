@@ -34,3 +34,27 @@ The database is the queue. Workers do not talk to each other. They race on the c
 ![What happens when a worker dies](docs/images/lease-reclaim.png)
 
 A crashed worker is reclaimed as soon as the lease expires. `Fail` is the path that waits: `1s`, `2s`, `4s`, and so on, capped at `30s`. At `max_attempts` (default 5) the row is marked `dead` and copied into `dead_letters`. Each claim counts as one attempt, including a claim that ends in a crash.
+
+## Project layout
+
+| Path | Role |
+| --- | --- |
+| `queue.go` | Add, dequeue, renew, acknowledge, fail |
+| `worker.go` | Claim loop, heartbeat, acknowledge |
+| `main.go` | Crash demo, and `go run . worker` |
+| `db.go` | Connection and schema |
+| `queue_test.go` | FIFO, leases, backoff, dead letters, chaos |
+| `queue_bench_test.go` | Claim plus ack benchmark |
+| `docker-compose.yml` | Postgres 16 on port 5444 |
+
+## API
+
+| Method | Effect |
+| --- | --- |
+| `AddTask(id, payload)` | Insert `pending`, or return the row that already uses this id |
+| `DequeueTask()` | Claim the oldest visible row and start a lease |
+| `RenewLease(id)` | Push `lease_expires_at` forward while the row is `in_progress` |
+| `Acknowledge(id)` | Mark the row `completed` |
+| `Fail(id, reason)` | Back off, or dead-letter once attempts are exhausted |
+
+`NewQueue` uses a 30 second lease and 5 attempts. The demo shortens the lease to 2 seconds so a crash is visible in one run.
