@@ -58,3 +58,20 @@ A crashed worker is reclaimed as soon as the lease expires. `Fail` is the path t
 | `Fail(id, reason)` | Back off, or dead-letter once attempts are exhausted |
 
 `NewQueue` uses a 30 second lease and 5 attempts. The demo shortens the lease to 2 seconds so a crash is visible in one run.
+
+## Run a worker process
+
+`go run .` clears the tables, enqueues four tasks, abandons one without a heartbeat, and runs two workers until every task is completed.
+
+```bash
+go run . worker 1
+go run . worker 2
+```
+
+Each command is one OS process. Tests use goroutines instead, against the same SQL.
+
+```bash
+make test
+make bench
+make demo
+```
