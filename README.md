@@ -75,3 +75,25 @@ make test
 make bench
 make demo
 ```
+
+## Tests
+
+The suite talks to the compose Postgres. An in-memory fake would hide the locks and the lease clock these tests exist to catch.
+
+![Test run](docs/images/tests.png)
+
+`TestChaos_CrashRedelivery` claims a task, drops the lease into the past, and checks that another goroutine acknowledges that same id after running it again. `TestChaos_PoisonWhileOthersComplete` fails one payload until it lands in `dead_letters` while the other tasks still complete.
+
+## Benchmark
+
+`BenchmarkDequeueAcknowledge` seeds a batch, then times claim plus ack. This is an integration benchmark against local Postgres, not a CPU microbenchmark.
+
+![Benchmark](docs/images/benchmark.png)
+
+On the machine used for this run, claim plus ack took about 21.4ms per operation (61 iterations in a 1 second window).
+
+## Crash demo
+
+![Demo](docs/images/demo.png)
+
+Worker 2 picked up task 1 only after the crash worker had already abandoned it. The other three tasks were finished by the healthy workers and were not stolen, because those workers renewed their leases.
