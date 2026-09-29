@@ -97,3 +97,12 @@ On the machine used for this run, claim plus ack took about 21.4ms per operation
 ![Demo](docs/images/demo.png)
 
 Worker 2 picked up task 1 only after the crash worker had already abandoned it. The other three tasks were finished by the healthy workers and were not stolen, because those workers renewed their leases.
+
+## Decisions
+
+- **Postgres, not an in-memory queue.** Durability and `SKIP LOCKED` are the point of the project. Tests need the database.
+- **Goroutines in tests, OS processes for the demo.** Cancelling a goroutine before ack exercises the same claim SQL as killing a process, without starting binaries inside `go test`.
+- **The caller-supplied id is the idempotency key.** A separate server-generated id needs a second column. Here the key and the id are the same string.
+- **`dead` on the task, plus a `dead_letters` row.** The claim query skips `dead`. The copy is what you inspect when a payload is poison.
+- **Immediate reclaim on crash, backoff only on `Fail`.** Waiting after every crash would slow the failure this queue is meant to absorb. A slow handler has to heartbeat, or the lease expires and the attempt is burned.
+- **The attempt count goes up on dequeue, not again on `Fail`.** A failure cannot double-count.
