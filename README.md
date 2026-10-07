@@ -46,6 +46,9 @@ A crashed worker is reclaimed as soon as the lease expires. `Fail` is the path t
 | `queue_test.go` | FIFO, leases, backoff, dead letters, chaos |
 | `queue_bench_test.go` | Claim plus ack benchmark |
 | `docker-compose.yml` | Postgres 16 on port 5444 |
+| `docs/schema.sql` | Table shape, same as startup |
+| `Makefile` | `test`, `bench`, and `demo` |
+| `.github/workflows/test.yml` | Postgres service, then `go test` |
 
 ## API
 
